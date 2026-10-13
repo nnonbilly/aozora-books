@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 作品テキストを取得 (フォークしたミラー)
-        run: git clone --depth 1 https://github.com/nnonbilly/aozorabunko_text.git src
+        run: git clone --depth 1 https://github.com/nnonbilly/aozorabunko_mirror src
 
       - name: 青空文庫の作品リストを取得 (著作権フラグ用)
         run: |
