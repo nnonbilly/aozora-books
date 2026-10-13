@@ -1,1 +1,43 @@
+name: Build books
 
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 毎日 11:00 (日本時間)。フォーク側の更新 (9:00) の後
+  workflow_dispatch:      # Actions 画面の「Run workflow」で手動実行
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-books
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 作品テキストを取得 (フォークしたミラー)
+        run: git clone --depth 1 https://github.com/nnonbilly/aozorabunko_text.git src
+
+      - name: 青空文庫の作品リストを取得 (著作権フラグ用)
+        run: |
+          curl -sSL -o list.zip https://www.aozora.gr.jp/index_pages/list_person_all_extended_utf8.zip
+          unzip -o list.zip
+
+      - name: 縦書き見開き用に変換
+        run: python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out books
+
+      - name: 変更をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A books
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -q -m "update books $(date '+%Y%m%d')"
+            git push
+          fi
