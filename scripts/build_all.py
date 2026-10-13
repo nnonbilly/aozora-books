@@ -85,8 +85,8 @@ def main():
     ap.add_argument("--src", required=True, help="aozorabunko_text のフォルダ")
     ap.add_argument("--meta", help="list_person_all_extended_utf8.csv (著作権ありの作品を除外するため)")
     ap.add_argument("--out", default="books")
-    ap.add_argument("--cols", type=int, default=16)
-    ap.add_argument("--rows", type=int, default=18)
+    ap.add_argument("--cols", type=int, default=12)
+    ap.add_argument("--rows", type=int, default=20)
     ap.add_argument("--include-copyrighted", action="store_true", help="著作権ありの作品も含める")
     args = ap.parse_args()
 
@@ -132,7 +132,7 @@ def main():
 
     (out / "index.txt").write_text(
         "".join(f"{bid}\t{a}\t{t}\t{p}\n" for a, t, bid, p in index), encoding="utf-8", newline="\n")
-    chars -= set("\n\r\t" + A.PAGE_SEP)
+    chars -= set("\n\r\t" + A.PAGE_SEP + A.RUBY_SEP + A.RUBY_ENTRY_SEP + A.RUBY_FIELD_SEP)
     for a, t, _, _ in index:
         chars |= set(a + t)
     (out / "used_chars.txt").write_text("".join(sorted(chars)), encoding="utf-8", newline="\n")
