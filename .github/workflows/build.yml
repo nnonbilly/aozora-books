@@ -28,7 +28,7 @@ jobs:
           unzip -o list.zip
 
       - name: 縦書き見開き用に変換
-        run: python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out books
+        run: python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out books --cols 12 --rows 20
 
       - name: 変更をコミット
         run: |
