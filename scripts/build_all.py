@@ -7,7 +7,8 @@ build_all.py - aozorabunko_text (作品/<著者>/<作品>.txt) を一括で縦�
 
 出力 (--out の下):
   <id先頭2文字>/<id>.txt  作品データ (id は元ファイルのパスから作る10桁の英数字。更新しても変わらない)
-  index.txt               作品一覧: id<TAB>著者<TAB>作品名<TAB>ページ数   (著者・作品名順)
+  index.txt               作品一覧: id<TAB>著者<TAB>作品名<TAB>ページ数<TAB>よみ (著者・作品名順)
+                          よみ = 「作品名よみ 著者よみ」(ひらがな・濁点なし・小書きなし。検索用)
   used_chars.txt          全作品で使われている文字 (TMP Font Asset 用)
   excluded.txt            著作権ありとして除外した作品
 """
@@ -16,6 +17,7 @@ import csv
 import hashlib
 import shutil
 import sys
+import unicodedata
 from collections import defaultdict
 from multiprocessing import Pool
 from pathlib import Path
@@ -35,10 +37,33 @@ def sanitize(s: str) -> str:
     return s[:120]
 
 
-def load_copyrighted(meta: Path):
-    """著作権ありの (著者, 作品名) の集合。作品・人物どちらかにフラグがあれば対象。"""
+SMALL_TO_LARGE = str.maketrans("ぁぃぅぇぉっゃゅょゎゕゖ", "あいうえおつやゆよわかけ")
+
+
+def norm_kana(s: str) -> str:
+    """検索用のよみ: ひらがな・濁点半濁点なし・小書きなし (五十音表の基本の字だけで探せるように)"""
+    out = []
+    for c in unicodedata.normalize("NFD", s):
+        o = ord(c)
+        if c in "\u3099\u309a":
+            continue
+        if 0x30A1 <= o <= 0x30F6:  # カタカナ → ひらがな
+            c = chr(o - 0x60)
+        if "ぁ" <= c <= "ゖ" or c == "ー":
+            out.append(c)
+    return unicodedata.normalize("NFC", "".join(out)).replace("ゔ", "う").translate(SMALL_TO_LARGE)
+
+
+def is_kana_only(s: str) -> bool:
+    return s != "" and all("ぁ" <= c <= "ゖ" or "ァ" <= c <= "ヶ" or c in "ー・　 " for c in s)
+
+
+def load_meta(meta: Path):
+    """(著作権ありの (著者, 作品名) の集合, {(著者, 作品名): (作品名よみ, 著者よみ)})
+    著作権は作品・人物どちらかにフラグがあれば対象。"""
     works = defaultdict(list)
     flagged = set()
+    readings = {}
     with meta.open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             wid = r.get("作品ID", "").strip()
@@ -47,12 +72,26 @@ def load_copyrighted(meta: Path):
             works[wid].append((name, title))
             if r.get("作品著作権フラグ", "").strip() == "あり" or r.get("人物著作権フラグ", "").strip() == "あり":
                 flagged.add(wid)
+            tr = norm_kana(r.get("作品名読み", ""))
+            ar = norm_kana(r.get("姓読み", "") + r.get("名読み", ""))
+            if (name, title) not in readings and (tr or ar):
+                readings[(name, title)] = (tr, ar)
     # 翻訳者だけ著作権ありの場合などに備え、その作品に関わる全員の名前で除外キーを作る
     keys = set()
     for wid in flagged:
         for name, title in works[wid]:
             keys.add((name, title))
-    return keys
+    return keys, readings
+
+
+def reading_for(author: str, stem: str, readings) -> str:
+    for t in title_candidates(stem):
+        if (author, t) in readings:
+            tr, ar = readings[(author, t)]
+            return f"{tr} {ar}".strip()
+    # 作品リストに無い場合: かなだけの題名・著者名ならそのまま使う
+    parts = [norm_kana(x) for x in (stem, author) if is_kana_only(x)]
+    return " ".join(p for p in parts if p)
 
 
 def title_candidates(stem: str):
@@ -96,12 +135,14 @@ def main():
     if not files:
         sys.exit(f"{src / '作品'} に作品がありません")
 
-    keys = set()
-    if args.meta and not args.include_copyrighted:
-        keys = load_copyrighted(Path(args.meta))
-        print(f"著作権ありの (著者, 作品名): {len(keys)} 件")
-    elif not args.include_copyrighted:
-        print("警告: --meta が無いので著作権ありの作品を除外できません", file=sys.stderr)
+    keys, readings = set(), {}
+    if args.meta:
+        keys, readings = load_meta(Path(args.meta))
+        if args.include_copyrighted:
+            keys = set()
+        print(f"著作権ありの (著者, 作品名): {len(keys)} 件 / よみがな: {len(readings)} 件")
+    else:
+        print("警告: --meta が無いので著作権ありの作品を除外できません (よみがなも付きません)", file=sys.stderr)
 
     excluded, jobs = [], []
     for f in files:
@@ -126,21 +167,22 @@ def main():
             failed.append(f"{rel}\t{err}")
             continue
         bid, author, title, pages, cs = info
-        index.append((author, title, bid, pages))
+        index.append((author, title, bid, pages, reading_for(author, title, readings)))
         chars |= cs
     index.sort()
 
     (out / "index.txt").write_text(
-        "".join(f"{bid}\t{a}\t{t}\t{p}\n" for a, t, bid, p in index), encoding="utf-8", newline="\n")
+        "".join(f"{bid}\t{a}\t{t}\t{p}\t{r}\n" for a, t, bid, p, r in index), encoding="utf-8", newline="\n")
+    with_reading = sum(1 for x in index if x[4])
     chars -= set("\n\r\t" + A.PAGE_SEP + A.RUBY_SEP + A.RUBY_ENTRY_SEP + A.RUBY_FIELD_SEP)
-    for a, t, _, _ in index:
+    for a, t, _, _, _ in index:
         chars |= set(a + t)
     (out / "used_chars.txt").write_text("".join(sorted(chars)), encoding="utf-8", newline="\n")
     (out / "excluded.txt").write_text("".join(r + "\n" for r in excluded), encoding="utf-8", newline="\n")
     if failed:
         (out / "failed.txt").write_text("\n".join(failed) + "\n", encoding="utf-8", newline="\n")
 
-    print(f"変換 {len(index)} 件 / 除外 {len(excluded)} 件 / 失敗 {len(failed)} 件 / 使用文字 {len(chars)} 字")
+    print(f"変換 {len(index)} 件 (よみあり {with_reading} 件) / 除外 {len(excluded)} 件 / 失敗 {len(failed)} 件 / 使用文字 {len(chars)} 字")
 
 
 if __name__ == "__main__":
