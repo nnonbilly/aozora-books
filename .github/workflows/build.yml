@@ -6,38 +6,55 @@ on:
   workflow_dispatch:      # Actions 画面の「Run workflow」で手動実行
 
 permissions:
-  contents: write
+  contents: write   # 古い books フォルダの削除用
+  pages: write      # GitHub Pages への公開
+  id-token: write
 
 concurrency:
-  group: build-books
+  group: pages
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 作品テキストを取得 (フォークしたミラー)
-        run: git clone --depth 1 https://github.com/nnonbilly/aozorabunko_mirror src
+        run: git clone --depth 1 https://github.com/nnonbilly/aozorabunko_mirror.git src
 
-      - name: 青空文庫の作品リストを取得 (著作権フラグ用)
+      - name: 青空文庫の作品リストを取得 (著作権フラグ・よみがな用)
         run: |
           curl -sSL -o list.zip https://www.aozora.gr.jp/index_pages/list_person_all_extended_utf8.zip
           unzip -o list.zip
 
       - name: 縦書き見開き用に変換
-        run: python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out books --cols 12 --rows 20
-
-      - name: 変更をコミット
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A books
-          if git diff --cached --quiet; then
-            echo "変更なし"
-          else
-            git commit -q -m "update books $(date '+%Y%m%d')"
+          python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out site/books --cols 12 --rows 20
+          cp site_template/index.html site/index.html
+          du -sh site
+
+      - name: リポジトリに残っている古い books フォルダを削除 (最初の1回だけ)
+        run: |
+          if [ -d books ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git rm -r -q books
+            git commit -q -m "books は GitHub Pages で公開するためリポジトリから削除"
+            git pull --rebase -q origin main
             git push
           fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: GitHub Pages に公開
+        id: deployment
+        uses: actions/deploy-pages@v4
