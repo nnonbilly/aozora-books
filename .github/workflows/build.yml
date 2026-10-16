@@ -34,7 +34,7 @@ jobs:
 
       - name: 縦書き見開き用に変換
         run: |
-          python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out site/books --cols 12 --rows 20
+          python3 scripts/build_all.py --src src --meta list_person_all_extended_utf8.csv --out site/books --cols 12 --rows 25
           cp site_template/index.html site/index.html
           du -sh site
 
